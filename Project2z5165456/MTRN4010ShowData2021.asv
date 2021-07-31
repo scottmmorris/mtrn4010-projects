@@ -1,0 +1,186 @@
+
+% ---------------------------------------------------------------------
+% MTRN4010/2021.T1
+
+% Example program, showing how to read the measurements, from the data file.
+% by Jose Guivant. MTRN4010.
+
+% You can modify this example, for solving some parts of the projects.
+function z5165456Project2MTRN40101()
+
+    global lhand lhand2 lhand3 ghand ghand2 ghand3 ghand4;
+
+    %Here, we load the data
+    Data=load('Measurements_AAS01.mat');  Data=Data.A; 
+    Landmarks = load('MapMTRN4010.mat');
+
+    % Here, we create a figure in which we will show the LiDAR scans, soon.
+    angleScan = [0:360]/2;
+    
+    [r,~]=GetRangeAndIntensityFromRawScan(Data.scans(:,1));
+    figure(2) ; clf(); hL=plot(angleScan,r,'.') ;  zoom on; grid on;
+    title('showing LiDAR scans (in polar, local frame)');  ylabel('range (m)'); xlabel('angle (degrees)'); axis([0,180,0,20]); 
+
+    hold on; hL2=plot(0,0,'.r');  % for showing brillant points, later.
+    legend({'points','brilliant points'});
+    
+    figure(4) ; clf(); lhand=plot(0,0,'.b') ;  zoom on; grid on;
+    title('LiDAR Data in local cartesian coords');  ylabel('y (m)'); xlabel('x (m)'); axis([-7 7 -3 11]); 
+
+    hold on; lhand2=plot(0,0,'.r');  % for showing brillant points, later.
+    hold on; lhand3=plot(0,0,'or');  % showing objects of interest
+    
+    hold on; plot(0,0,'gx');
+    legend({'points', 'brilliant points', 'OOI', 'LiDAR'});
+    
+    figure(5) ; clf(); ghand=plot(0,0,'.b') ;  zoom on; grid on;
+    title('LiDAR Data in global coords');  ylabel('y (m)'); xlabel('x (m)'); axis([-7 7 -3 11]); 
+
+    hold on; ghand2=plot(0,0,'.r');  % for showing brillant points, later.
+    hold on; ghand3=plot(0,0,'or');  % showing objects of interest
+    hold on; ghand4=plot(0,0,'gx');  % showing objects of interest
+
+    legend({'points', 'brilliant points', 'OOI', 'LiDAR'});
+    
+    % you should start at i0=1 o close.
+    L=Data.L;       %number of samples in this dataset.
+
+    X = zeros(3, L);
+    X(:,1) = [0;0;rad2deg(pi/2)];              % initial pose. You will need it.
+    
+    i0 = 1;
+    t0=0.0001*double(Data.t(i0));      % initial time.  
+    
+    while Data.t(i0) < 100000 + 20000
+        i0 = i0 + 1;
+    end
+    
+    bias = 0.01 * mean(Data.Z(2, 1:i0));
+    i0 = 1;
+
+    for i=i0:L
+    tic;
+        t=0.0001*double(Data.t(i));
+        m = Data.Z(:,i);            % data, related to sample-i
+
+        NewSpeed = double(m(1))*0.001;          % speed in m/s
+        NewAngRate = double(m(2))*0.01 - bias;          % rate in deg/sec 
+        
+        % However, you decide the engineering units you want to use.
+        % fprintf('(%d) measured speed [%.2f]m/s, heading rate=[%.2f]deg/sec\n',i,NewSpeed,NewAngRate);
+        
+        indexScan = m(3);  
+        
+        dt = t-t0; t0=t;
+        
+        %here you could/should/may use a kinematic model, for the small horizon dt.
+        % So you keep estimating the state vector X.
+        % X(t+dt) = F( X(t), inputs(t),..)
+        X(:, i+1) = X(:, i) + dt * [NewSpeed * cos(deg2rad(X(3, i))); NewSpeed * sin(deg2rad(X(3, i))); NewAngRate];
+        
+        % Now, if there is a LiDAR scan at this time?
+        if (indexScan>1)
+            
+            %extract ranges and intensities, of the 361 "pixels"
+            [r,I]=GetRangeAndIntensityFromRawScan(Data.scans(:, indexScan ));
+            
+            ProcessLiDAR( r, I , X(:,i) );   %here you may process the LiDAR
+            %data.  variable "X" is the current pose of the platform
+            %(assuming you keep estimating it). If your procesing of the
+            %LiDAR data does require it.
+
+            % if we want to show it, ...
+            set(hL,'ydata',r);
+            % which points do have intensity>0??
+            ii=find(I>0); set(hL2,'xdata',angleScan(ii),'ydata',r(ii));
+            
+%             m = 1;
+%             for m=1:length(ii) - 1
+%                 if (abs(r(ii(m)) - r(ii(m + 1))) < 1 && (ii(m) - ii(m+1)) * r(ii(m)) < 1)
+%                   ooi  
+%             end
+            
+            pause(0.01);  % short pause, just to see some animation, more slowly.You may change this.
+            
+        end
+        toc;
+    end
+    
+    figure(1); hold on; grid on;
+    title('UGV Path');
+    xlabel('x(m)');
+    ylabel('y(m)');
+    axis([-1.5 3.5 -1 5]);
+    plot(X(1, :), X(2, :), 'r');
+    
+    figure(3); hold on; grid on;
+    title('Heading');
+    axis([0 250 -350 100]);
+    plot(0.0001*double(Data.t), X(3, 1:end-1), 'b');
+end 
+
+% -------------------------------------------------------
+
+% Function for parsing the binary scan; extracting ranges and intensities of reflections.
+function [r,I]=GetRangeAndIntensityFromRawScan(scan)
+    r = 0.01*single(bitand(scan,8191));
+    I= bitshift(scan,-13);      
+    % bits [0:12] are range, bits [13:15] intensity
+end
+
+
+function ProcessLiDAR( r, I , X )
+    global lhand lhand2 lhand3 ghand ghand2 ghand3 ghand4;
+    ang = 0:0.5:180;
+    x = transpose(r) .* cos(deg2rad(ang));
+    y = transpose(r) .* sin(deg2rad(ang));
+    set(lhand,'ydata',y);
+    set(lhand,'xdata',x);
+    ii=find(I>0);
+    xc = x;
+    yc = y + 0.46;
+    xg = xc * cos(deg2rad(X(3) - 90)) - yc * sin(deg2rad(X(3) - 90)) + X(1);
+    yg = xc * sin(deg2rad(X(3) - 90)) + yc * cos(deg2rad(X(3) - 90)) + X(2);
+    set(ghand,'xdata', xg, 'ydata', yg);
+    set(ghand2,'xdata', xg(ii),'ydata', yg(ii));
+    set(ghand4, 'xdata', X(1), 'ydata', X(2));
+
+    ooi = zeros(1, 2);
+    n = 1; m = 1;
+    while n < length(r) - 1
+        bp = 0;
+        counter = 0;
+        w_x = 0;
+        w_y = 0;
+        while (abs(r(n) - r(n + 1)) < 0.1 && n < length(r) - 1)
+            if(I(n) > 0)
+                bp = 1;
+            end
+            w_x = w_x + x(n);
+            w_y = w_y + y(n);
+            n = n + 1;
+            counter = counter + 1;
+        end
+        if(bp == 1)
+            ooi(m, 1) = w_x/counter;
+            ooi(m, 2) = w_y/counter;
+            m = m + 1;
+        end
+        n = n + 1;
+    end
+    set(lhand2,'xdata',x(ii),'ydata',y(ii));
+    set(lhand3,'xdata',ooi(:,1),'ydata',ooi(:,2));
+    
+    ooi(:,2) = ooi(:,2) + 0.46;
+    ooixg = ooi(:,1) * cos(deg2rad(X(3) - 90)) - ooi(:,2) * sin(deg2rad(X(3) - 90)) + X(1);
+    ooiyg = ooi(:,1) * sin(deg2rad(X(3) - 90)) + ooi(:,2) * cos(deg2rad(X(3) - 90)) + X(2);
+    set(ghand3,'xdata',ooixg,'ydata',ooiyg);
+
+end
+% ---------------------------------------------------------------------
+
+% --- END of example.
+% Questions: ask the lecturer : j.guivant@unsw.edu.au
+% or ask the demonstrators.
+
+% ---------------------------------------------------------------------
